@@ -11,9 +11,7 @@ import "core:encoding/json"
 import "core:time"
 import "core:time/datetime"
 import "core:strings"
-import "core:strconv"
 import "../odintools/stringTools"
-import "core:slice"
 
 main :: proc() {
     when ODIN_DEBUG {
@@ -34,18 +32,21 @@ main :: proc() {
 
     arena : vmem.Arena
     allocErr := vmem.arena_init_growing(&arena)
-    if allocErr != nil do panic("Allocation Error at line 36")
+    if allocErr != nil do panic("Allocation Error at line 34")
     defer vmem.arena_destroy(&arena)
     arenaAlloc := vmem.arena_allocator(&arena)
 
     Options :: struct {
-        d : i64 `args:"pos=0,required" usage:"Days of exploration you would like to have broken down"`,
+        d : i64 `usage:"Days of exploration you would like to have broken down"`,
+        e : bool `usage:"List all earthlikes discovered"`,
         overflow : [dynamic]string `usage:"Any extra arguments go here."`
     }
     opt : Options
     defer delete(opt.overflow)
 
     flags.parse(&opt, os.args[1:], strict=false, allocator=arenaAlloc)
+
+    fmt.println(opt)
     
     // Check if config.json exists, if it doesn't then make config.json, otherwise read config.json
     config : map[string]string
@@ -56,10 +57,10 @@ main :: proc() {
         config, buildErr = buildConfig(arenaAlloc)
         if buildErr != nil {
             if buildErr == .MarshalError {
-                fmt.println("Marshal Error on line 55")
+                fmt.println("Marshal Error on line 57")
             }
             if buildErr == .WriteError {
-                fmt.println("Failed to write config.json on line 55")
+                fmt.println("Failed to write config.json on line 57")
             }
             return
         }
@@ -67,7 +68,7 @@ main :: proc() {
         configRaw, success := os.read_entire_file_from_filename("config.json", arenaAlloc)
         umErr := json.unmarshal(configRaw, &config, allocator=arenaAlloc)
         if umErr != nil {
-            fmt.println("Unmarshall Error at line 67:", umErr)
+            fmt.println("Unmarshall Error at line 69:", umErr)
             return
         }
     }
@@ -76,7 +77,7 @@ main :: proc() {
     logPath : string = config["JournalDirectory"]
     handle, err := os.open(logPath)
     if err != nil {
-        fmt.println("Open error line 76:", err)
+        fmt.println("Open error line 78:", err)
         return
     }
     defer os.close(handle)
@@ -95,6 +96,7 @@ main :: proc() {
     explorationData.bodyFSSCounts = make(map[string]int, arenaAlloc)
     explorationData.bodyDSSCounts = make(map[string]int, arenaAlloc)
     explorationData.bioScanCounts = make(map[string]int, arenaAlloc)
+    explorationData.earthlikes = make(map[string]u8, arenaAlloc)
     
     pool : thread.Pool
     thread.pool_init(&pool, arenaAlloc, 4)
@@ -121,6 +123,7 @@ main :: proc() {
     }
     thread.pool_shutdown(&pool)
     printDiscoveryValues(explorationData)
+    if opt.e do printEarthlikes(explorationData)
 }
 
 ParseTaskData :: struct {
@@ -140,7 +143,8 @@ ExplorationData :: struct {
     smallestBody : string,
     smallestBodyRadius : f32,
     firstDiscovery : i32,
-    firstMapped : i32
+    firstMapped : i32,
+    earthlikes : map[string]u8
 }
 
 parseFilesTask :: proc(task : thread.Task) {
@@ -148,7 +152,7 @@ parseFilesTask :: proc(task : thread.Task) {
     using data
     fileData, readSuccess := os.read_entire_file_from_filename(fileInfo.fullpath)
     if !readSuccess {
-        fmt.println("Read failed at line 148")
+        fmt.println("Read failed at line 153")
         return
     }
     fileLines := strings.split(string(fileData), "\r\n", context.temp_allocator)
@@ -160,7 +164,7 @@ parseFilesTask :: proc(task : thread.Task) {
         // scan, both FSS & DSS
         if strings.contains(line, "\"Scan\"") {
             scan, err := edlib.deserializeScanEvent(line, allocator)
-            if err != nil do fmt.printfln("Unmarshall Error on line 161: %s | %s", err, fileInfo.name)
+            if err != nil do fmt.printfln("Unmarshall Error on line 166: %s | %s", err, fileInfo.name)
             if scan.PlanetClass == "" do continue
             explorationData.bodyFSSCounts[scan.PlanetClass] += 1
             if bodies[scan.BodyName] {
@@ -170,7 +174,7 @@ parseFilesTask :: proc(task : thread.Task) {
             else {
                 bodies[scan.BodyName] = true
             }
-            if scan.MeanAnomaly > explorationData.highestAnomalyBodyValue {
+            if scan.MeanAnomaly > explorationData.highestAnomalyBodyValue && scan.Landable {
                 explorationData.highestAnomalyBodyValue = scan.MeanAnomaly
                 explorationData.highestAnomalyBodyName = scan.BodyName
             }
@@ -184,11 +188,12 @@ parseFilesTask :: proc(task : thread.Task) {
             }
             if !scan.WasDiscovered do explorationData.firstDiscovery += 1
             if !scan.WasMapped do notScanned[scan.BodyName] = true
+            if scan.PlanetClass == "Earthlike body" do explorationData.earthlikes[scan.BodyName] = 1
         }
         // Organic scans, tabulate based on Genus name, e.g. "Stratum"
         if strings.contains(line, "\"ScanOrganic\"") {
             soEvent, err := edlib.deserializeScanOrganicEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 189:", err)
+            if err != nil do fmt.println("Unmarshall Error on line 195:", err)
             if soEvent.ScanType != "Analyse" do continue
             explorationData.bioScanCounts[soEvent.Genus_Localised] += 1
         }
@@ -233,6 +238,9 @@ tabulateData :: proc(targetPTR : ^ExplorationData, data : ExplorationData) {
     for organicScan in data.bioScanCounts {
         targetPTR.bioScanCounts[organicScan] += data.bioScanCounts[organicScan]
     }
+    for earthlike in data.earthlikes {
+        targetPTR.earthlikes[earthlike] = data.earthlikes[earthlike]
+    }
     if data.largestBodyRadius > targetPTR.largestBodyRadius {
         targetPTR.largestBodyRadius = data.largestBodyRadius
         targetPTR.largestBody = data.largestBody
@@ -247,4 +255,9 @@ tabulateData :: proc(targetPTR : ^ExplorationData, data : ExplorationData) {
     }
     targetPTR.firstDiscovery += data.firstDiscovery
     targetPTR.firstMapped += data.firstMapped
+}
+
+printEarthlikes :: proc(explorationData : ExplorationData) {
+    fmt.println("    Earthlikes:")
+    for earthlike in explorationData.earthlikes do fmt.printfln("      %s", earthlike)
 }

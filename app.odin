@@ -164,7 +164,7 @@ parseFilesTask :: proc(task : thread.Task) {
             scan, err := edlib.deserializeScanEvent(line, allocator)
             if err != nil do fmt.printfln("Unmarshall Error on line 164: %s | %s", err, fileInfo.name)
             if scan.PlanetClass == "" do continue
-            explorationData.bodyFSSCounts[scan.PlanetClass] += 1
+            if !bodies[scan.BodyName] do explorationData.bodyFSSCounts[scan.PlanetClass] += 1
             if bodies[scan.BodyName] {
                 explorationData.bodyDSSCounts[scan.PlanetClass] += 1
                 if !scan.WasMapped do explorationData.firstMapped += 1

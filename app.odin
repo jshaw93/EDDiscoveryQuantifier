@@ -39,6 +39,7 @@ main :: proc() {
     Options :: struct {
         d : i64 `usage:"Days of exploration you would like to have broken down"`,
         e : bool `usage:"List all earthlikes discovered"`,
+        w : bool `usage:"List all water worlds discovered"`,
         overflow : [dynamic]string `usage:"Any extra arguments go here."`
     }
     opt : Options
@@ -55,10 +56,10 @@ main :: proc() {
         config, buildErr = buildConfig(arenaAlloc)
         if buildErr != nil {
             if buildErr == .MarshalError {
-                fmt.println("Marshal Error on line 55")
+                fmt.println("Marshal Error on line 56")
             }
             if buildErr == .WriteError {
-                fmt.println("Failed to write config.json on line 55")
+                fmt.println("Failed to write config.json on line 56")
             }
             return
         }
@@ -66,7 +67,7 @@ main :: proc() {
         configRaw, success := os.read_entire_file_from_filename("config.json", arenaAlloc)
         umErr := json.unmarshal(configRaw, &config, allocator=arenaAlloc)
         if umErr != nil {
-            fmt.println("Unmarshall Error at line 67:", umErr)
+            fmt.println("Unmarshall Error at line 68:", umErr)
             return
         }
     }
@@ -75,7 +76,7 @@ main :: proc() {
     logPath : string = config["JournalDirectory"]
     handle, err := os.open(logPath)
     if err != nil {
-        fmt.println("Open error line 76:", err)
+        fmt.println("Open error line 77:", err)
         return
     }
     defer os.close(handle)
@@ -123,6 +124,7 @@ main :: proc() {
     thread.pool_shutdown(&pool)
     printDiscoveryValues(explorationData)
     if opt.e do printEarthlikes(explorationData)
+    if opt.w do printWaterWorlds(explorationData)
 }
 
 ParseTaskData :: struct {
@@ -152,7 +154,7 @@ parseFilesTask :: proc(task : thread.Task) {
     using data
     fileData, readSuccess := os.read_entire_file_from_filename(fileInfo.fullpath)
     if !readSuccess {
-        fmt.println("Read failed at line 151")
+        fmt.println("Read failed at line 155")
         return
     }
     fileLines := strings.split(string(fileData), "\r\n", context.temp_allocator)
@@ -164,7 +166,7 @@ parseFilesTask :: proc(task : thread.Task) {
         // scan, both FSS & DSS
         if strings.contains(line, "\"Scan\"") {
             scan, err := edlib.deserializeScanEvent(line, allocator)
-            if err != nil do fmt.printfln("Unmarshall Error on line 166: %s | %s", err, fileInfo.name)
+            if err != nil do fmt.printfln("Unmarshall Error on line 168: %s | %s", err, fileInfo.name)
             if scan.PlanetClass == "" do continue
             if !bodies[scan.BodyName] do explorationData.bodyFSSCounts[scan.PlanetClass] += 1
             if bodies[scan.BodyName] {
@@ -194,7 +196,7 @@ parseFilesTask :: proc(task : thread.Task) {
         // Organic scans, tabulate based on Genus name, e.g. "Stratum"
         if strings.contains(line, "\"ScanOrganic\"") {
             soEvent, err := edlib.deserializeScanOrganicEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 196:", err)
+            if err != nil do fmt.println("Unmarshall Error on line 198:", err)
             if soEvent.ScanType != "Analyse" do continue
             explorationData.bioScanCounts[soEvent.Genus_Localised] += 1
         }
@@ -264,4 +266,9 @@ tabulateData :: proc(targetPTR : ^ExplorationData, data : ExplorationData) {
 printEarthlikes :: proc(explorationData : ExplorationData) {
     fmt.println("    Earthlikes:")
     for earthlike in explorationData.earthlikes do fmt.printfln("      %s", earthlike)
+}
+
+printWaterWorlds :: proc(explorationData : ExplorationData) {
+    fmt.println("    Water worlds:")
+    for waterWorld in explorationData.waterWorlds do fmt.printfln("      %s", waterWorld)
 }

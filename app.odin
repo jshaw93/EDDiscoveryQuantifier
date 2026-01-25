@@ -95,6 +95,7 @@ main :: proc() {
     explorationData.bodyDSSCounts = make(map[string]int, arenaAlloc)
     explorationData.bioScanCounts = make(map[string]int, arenaAlloc)
     explorationData.earthlikes = make(map[string]u8, arenaAlloc)
+    explorationData.waterWorlds = make(map[string]u8, arenaAlloc)
     
     pool : thread.Pool
     thread.pool_init(&pool, arenaAlloc, 4)
@@ -142,7 +143,8 @@ ExplorationData :: struct {
     smallestBodyRadius : f32,
     firstDiscovery : i32,
     firstMapped : i32,
-    earthlikes : map[string]u8
+    earthlikes : map[string]u8,
+    waterWorlds : map[string]u8
 }
 
 parseFilesTask :: proc(task : thread.Task) {
@@ -162,7 +164,7 @@ parseFilesTask :: proc(task : thread.Task) {
         // scan, both FSS & DSS
         if strings.contains(line, "\"Scan\"") {
             scan, err := edlib.deserializeScanEvent(line, allocator)
-            if err != nil do fmt.printfln("Unmarshall Error on line 164: %s | %s", err, fileInfo.name)
+            if err != nil do fmt.printfln("Unmarshall Error on line 166: %s | %s", err, fileInfo.name)
             if scan.PlanetClass == "" do continue
             if !bodies[scan.BodyName] do explorationData.bodyFSSCounts[scan.PlanetClass] += 1
             if bodies[scan.BodyName] {
@@ -187,11 +189,12 @@ parseFilesTask :: proc(task : thread.Task) {
             if !scan.WasDiscovered do explorationData.firstDiscovery += 1
             if !scan.WasMapped do notScanned[scan.BodyName] = true
             if scan.PlanetClass == "Earthlike body" do explorationData.earthlikes[scan.BodyName] = 1
+            if scan.PlanetClass == "Water world" do explorationData.waterWorlds[scan.BodyName] = 1
         }
         // Organic scans, tabulate based on Genus name, e.g. "Stratum"
         if strings.contains(line, "\"ScanOrganic\"") {
             soEvent, err := edlib.deserializeScanOrganicEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 193:", err)
+            if err != nil do fmt.println("Unmarshall Error on line 196:", err)
             if soEvent.ScanType != "Analyse" do continue
             explorationData.bioScanCounts[soEvent.Genus_Localised] += 1
         }
@@ -238,6 +241,9 @@ tabulateData :: proc(targetPTR : ^ExplorationData, data : ExplorationData) {
     }
     for earthlike in data.earthlikes {
         targetPTR.earthlikes[earthlike] = data.earthlikes[earthlike]
+    }
+    for waterWorld in data.waterWorlds {
+        targetPTR.waterWorlds[waterWorld] = data.waterWorlds[waterWorld]
     }
     if data.largestBodyRadius > targetPTR.largestBodyRadius {
         targetPTR.largestBodyRadius = data.largestBodyRadius

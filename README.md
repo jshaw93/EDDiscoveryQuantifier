@@ -5,7 +5,7 @@ ED Discovery Quantifier is a simple Journal application built to be used through
 ## Usage
 
 Run the application from a commandline tool such as cmd.exe or powershell.
-* ./EDDiscoveryQuantifier -d=5 -e -w
+* ./EDDiscoveryQuantifier.exe -d=5 -e -w
 
 ### Flags
 

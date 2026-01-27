@@ -266,9 +266,11 @@ tabulateData :: proc(targetPTR : ^ExplorationData, data : ExplorationData) {
 printEarthlikes :: proc(explorationData : ExplorationData) {
     fmt.println("    Earthlikes:")
     for earthlike in explorationData.earthlikes do fmt.printfln("      %s", earthlike)
+    fmt.println("  ======================================")
 }
 
 printWaterWorlds :: proc(explorationData : ExplorationData) {
     fmt.println("    Water worlds:")
     for waterWorld in explorationData.waterWorlds do fmt.printfln("      %s", waterWorld)
+    fmt.println("  ======================================")
 }

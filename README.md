@@ -9,6 +9,7 @@ Run the application from a commandline tool such as cmd.exe or powershell.
 
 ### Flags
 
-* -d: Specify the days from the current time you are running the application that you want the app to summarize.  -d=5 would summarize using logs from the past 5 days.
+* -d: Specify the days from the current time you are running the application that you want the app to summarize.
+    * -d=5 would summarize using logs from the past 5 days.
 * -e: List the body names of any Earthlike worlds you have scanned.
 * -w: List the body names of any Water worlds you have scanned.

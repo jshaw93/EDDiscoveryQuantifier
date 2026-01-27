@@ -1,7 +1,7 @@
 package discquant
 
 import "core:fmt"
-import "core:os"
+import "core:os/os2"
 import "core:flags"
 import "core:thread"
 import "core:mem"
@@ -45,12 +45,12 @@ main :: proc() {
     opt : Options
     defer delete(opt.overflow)
 
-    flags.parse(&opt, os.args[1:], strict=false, allocator=arenaAlloc)
+    flags.parse(&opt, os2.args[1:], strict=false, allocator=arenaAlloc)
     
     // Check if config.json exists, if it doesn't then make config.json, otherwise read config.json
     config : map[string]string
     defer delete(config)
-    configExists : bool = os.exists("config.json")
+    configExists : bool = os2.exists("config.json")
     if !configExists {
         buildErr : ConfigBuildError
         config, buildErr = buildConfig(arenaAlloc)
@@ -64,7 +64,7 @@ main :: proc() {
             return
         }
     } else {
-        configRaw, success := os.read_entire_file_from_filename("config.json", arenaAlloc)
+        configRaw, success := os2.read_entire_file_from_filename("config.json", arenaAlloc)
         umErr := json.unmarshal(configRaw, &config, allocator=arenaAlloc)
         if umErr != nil {
             fmt.println("Unmarshall Error at line 68:", umErr)
@@ -74,14 +74,14 @@ main :: proc() {
 
     // Open journal directory and find latest N journals, defined by -d at runtime
     logPath : string = config["JournalDirectory"]
-    handle, err := os.open(logPath)
+    logsDir, err := os2.open(logPath)
     if err != nil {
         fmt.println("Open error line 77:", err)
         return
     }
-    defer os.close(handle)
-    fileInfos, fErr := os.read_dir(handle, 8192, arenaAlloc)
-    latestFiles : [dynamic]os.File_Info
+    defer os2.close(logsDir)
+    fileInfos, fErr := os2.read_dir(logsDir, -1, arenaAlloc)
+    latestFiles : [dynamic]os2.File_Info
     defer delete(latestFiles)
     for fileInfo in fileInfos {
         if !strings.contains(fileInfo.name, ".log") do continue
@@ -128,7 +128,7 @@ main :: proc() {
 }
 
 ParseTaskData :: struct {
-    fileInfo : os.File_Info,
+    fileInfo : os2.File_Info,
     allocator : mem.Allocator,
     explorationData : ExplorationData
 }
@@ -152,7 +152,7 @@ ExplorationData :: struct {
 parseFilesTask :: proc(task : thread.Task) {
     data := transmute(^ParseTaskData)task.data
     using data
-    fileData, readSuccess := os.read_entire_file_from_filename(fileInfo.fullpath)
+    fileData, readSuccess := os2.read_entire_file_from_filename(fileInfo.fullpath)
     if !readSuccess {
         fmt.println("Read failed at line 155")
         return

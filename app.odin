@@ -88,6 +88,7 @@ main :: proc() {
         now, _ := time.time_to_datetime(time.now())
         makeTime, _ := time.time_to_datetime(fileInfo.creation_time)
         delta, _ := datetime.subtract_datetimes(now, makeTime)
+        if opt.d == -1 do append(&latestFiles, fileInfo)
         if delta.days <= opt.d do append(&latestFiles, fileInfo)
     }
 
@@ -156,7 +157,7 @@ parseFilesTask :: proc(task : thread.Task) {
     using data
     fileData, readErr := os2.read_entire_file_from_path(fileInfo.fullpath, context.temp_allocator)
     if readErr != nil {
-        fmt.println("Read failed at line 157: %s", readErr)
+        fmt.println("Read failed at line 158: %s", readErr)
         return
     }
     fileLines := strings.split(string(fileData), "\r\n", context.temp_allocator)
@@ -170,7 +171,7 @@ parseFilesTask :: proc(task : thread.Task) {
         // scan, both FSS & DSS
         if strings.contains(line, "\"Scan\"") {
             scan, err := edlib.deserializeScanEvent(line, allocator)
-            if err != nil do fmt.printfln("Unmarshall Error on line 172: %s | %s", err, fileInfo.name)
+            if err != nil do fmt.printfln("Unmarshall Error on line 173: %s | %s", err, fileInfo.name)
             if scan.PlanetClass == "" do continue
             if bodies[scan.BodyName].planetClass == "" {
                 explorationData.bodyFSSCounts[scan.PlanetClass] += 1
@@ -194,8 +195,8 @@ parseFilesTask :: proc(task : thread.Task) {
         }
         // DSS Scan complete
         if strings.contains(line, "\"event\":\"SAAScanComplete\"") {
-            saasEvent, err := edlib.deserializeSAASScanCompleteEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 197:", err)
+            saasEvent, err := edlib.deserializeSAAScanCompleteEvent(line, allocator)
+            if err != nil do fmt.println("Unmarshall Error on line 198:", err)
             if strings.contains(saasEvent.BodyName, "Ring") do continue
             body := bodies[saasEvent.BodyName]
             explorationData.bodyDSSCounts[body.planetClass] += 1
@@ -207,7 +208,7 @@ parseFilesTask :: proc(task : thread.Task) {
         // Organic scans, tabulate based on Genus name, e.g. "Stratum"
         if strings.contains(line, "\"ScanOrganic\"") {
             soEvent, err := edlib.deserializeScanOrganicEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 209:", err)
+            if err != nil do fmt.println("Unmarshall Error on line 210:", err)
             if soEvent.ScanType != "Analyse" do continue
             explorationData.bioScanCounts[soEvent.Genus_Localised] += 1
         }

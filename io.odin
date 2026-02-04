@@ -15,8 +15,8 @@ buildConfig :: proc(allocator := context.allocator) -> (config : map[string]stri
     if mErr != nil {
         return baseConfig, .MarshalError
     }
-    success := os2.write_entire_file("config.json", data)
-    if !success {
+    writeErr := os2.write_entire_file("config.json", data)
+    if writeErr != nil {
         return baseConfig, .WriteError
     }
     return baseConfig, nil

@@ -64,7 +64,7 @@ main :: proc() {
             return
         }
     } else {
-        configRaw, success := os2.read_entire_file_from_filename("config.json", arenaAlloc)
+        configRaw, success := os2.read_entire_file_from_path("./config.json", arenaAlloc)
         umErr := json.unmarshal(configRaw, &config, allocator=arenaAlloc)
         if umErr != nil {
             fmt.println("Unmarshall Error at line 68:", umErr)
@@ -94,6 +94,7 @@ main :: proc() {
     explorationData : ExplorationData
     explorationData.bodyFSSCounts = make(map[string]int, arenaAlloc)
     explorationData.bodyDSSCounts = make(map[string]int, arenaAlloc)
+    explorationData.bodyFirstMappedCounts = make(map[string]int, arenaAlloc)
     explorationData.bioScanCounts = make(map[string]int, arenaAlloc)
     explorationData.earthlikes = make(map[string]u8, arenaAlloc)
     explorationData.waterWorlds = make(map[string]u8, arenaAlloc)
@@ -136,6 +137,7 @@ ParseTaskData :: struct {
 ExplorationData :: struct {
     bodyFSSCounts : map[string]int,
     bodyDSSCounts : map[string]int,
+    bodyFirstMappedCounts : map[string]int,
     bioScanCounts : map[string]int,
     highestAnomalyBodyName : string,
     highestAnomalyBodyValue : f32,
@@ -152,29 +154,27 @@ ExplorationData :: struct {
 parseFilesTask :: proc(task : thread.Task) {
     data := transmute(^ParseTaskData)task.data
     using data
-    fileData, readSuccess := os2.read_entire_file_from_filename(fileInfo.fullpath)
-    if !readSuccess {
-        fmt.println("Read failed at line 155")
+    fileData, readErr := os2.read_entire_file_from_path(fileInfo.fullpath, context.temp_allocator)
+    if readErr != nil {
+        fmt.println("Read failed at line 157: %s", readErr)
         return
     }
     fileLines := strings.split(string(fileData), "\r\n", context.temp_allocator)
-    bodies := make(map[string]bool, allocator)
+    Body :: struct {
+        planetClass : string,
+        wasMapped : bool
+    }
+    bodies := make(map[string]Body, allocator)
     defer delete(bodies)
-    notScanned := make(map[string]bool, allocator)
-    defer delete(notScanned)
     for line in fileLines {
         // scan, both FSS & DSS
         if strings.contains(line, "\"Scan\"") {
             scan, err := edlib.deserializeScanEvent(line, allocator)
-            if err != nil do fmt.printfln("Unmarshall Error on line 168: %s | %s", err, fileInfo.name)
+            if err != nil do fmt.printfln("Unmarshall Error on line 172: %s | %s", err, fileInfo.name)
             if scan.PlanetClass == "" do continue
-            if !bodies[scan.BodyName] do explorationData.bodyFSSCounts[scan.PlanetClass] += 1
-            if bodies[scan.BodyName] {
-                explorationData.bodyDSSCounts[scan.PlanetClass] += 1
-                if !scan.WasMapped do explorationData.firstMapped += 1
-            }
-            else {
-                bodies[scan.BodyName] = true
+            if bodies[scan.BodyName].planetClass == "" {
+                explorationData.bodyFSSCounts[scan.PlanetClass] += 1
+                bodies[scan.BodyName] = {scan.PlanetClass, scan.WasMapped}
             }
             if scan.MeanAnomaly > explorationData.highestAnomalyBodyValue && scan.Landable {
                 explorationData.highestAnomalyBodyValue = scan.MeanAnomaly
@@ -189,14 +189,25 @@ parseFilesTask :: proc(task : thread.Task) {
                 explorationData.smallestBody = scan.BodyName
             }
             if !scan.WasDiscovered do explorationData.firstDiscovery += 1
-            if !scan.WasMapped do notScanned[scan.BodyName] = true
             if scan.PlanetClass == "Earthlike body" do explorationData.earthlikes[scan.BodyName] = 1
             if scan.PlanetClass == "Water world" do explorationData.waterWorlds[scan.BodyName] = 1
+        }
+        // DSS Scan complete
+        if strings.contains(line, "\"event\":\"SAAScanComplete\"") {
+            saasEvent, err := edlib.deserializeSAASScanCompleteEvent(line, allocator)
+            if err != nil do fmt.println("Unmarshall Error on line 197:", err)
+            if strings.contains(saasEvent.BodyName, "Ring") do continue
+            body := bodies[saasEvent.BodyName]
+            explorationData.bodyDSSCounts[body.planetClass] += 1
+            if !body.wasMapped {
+                explorationData.firstMapped += 1
+                explorationData.bodyFirstMappedCounts[body.planetClass] += 1
+            }
         }
         // Organic scans, tabulate based on Genus name, e.g. "Stratum"
         if strings.contains(line, "\"ScanOrganic\"") {
             soEvent, err := edlib.deserializeScanOrganicEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 198:", err)
+            if err != nil do fmt.println("Unmarshall Error on line 209:", err)
             if soEvent.ScanType != "Analyse" do continue
             explorationData.bioScanCounts[soEvent.Genus_Localised] += 1
         }
@@ -212,7 +223,8 @@ printDiscoveryValues :: proc(explorationData : ExplorationData, allocator := con
         if explorationData.bodyFSSCounts[bodyType] == 0 && explorationData.bodyDSSCounts[bodyType] == 0 do continue
         fssScans := stringTools.integerToStringDelimited(explorationData.bodyFSSCounts[bodyType], ',', context.temp_allocator)
         dssScans := stringTools.integerToStringDelimited(explorationData.bodyDSSCounts[bodyType], ',', context.temp_allocator)
-        fmt.printfln("    %s FSS scans: %s | DSS scans: %s", bodyType, fssScans, dssScans)
+        firstMaps := stringTools.integerToStringDelimited(explorationData.bodyFirstMappedCounts[bodyType], ',', context.temp_allocator)
+        fmt.printfln("    %s FSS scans: %s | DSS scans: %s | First maps: %s", bodyType, fssScans, dssScans, firstMaps)
     }
     fmt.println("  ======================================")
     largestSize := stringTools.floatToStringDelimited(explorationData.largestBodyRadius, ',', 1, context.temp_allocator)
@@ -237,6 +249,9 @@ tabulateData :: proc(targetPTR : ^ExplorationData, data : ExplorationData) {
     }
     for dss in data.bodyDSSCounts {
         targetPTR.bodyDSSCounts[dss] += data.bodyDSSCounts[dss]
+    }
+    for first in data.bodyFirstMappedCounts {
+        targetPTR.bodyFirstMappedCounts[first] += data.bodyFirstMappedCounts[first]
     }
     for organicScan in data.bioScanCounts {
         targetPTR.bioScanCounts[organicScan] += data.bioScanCounts[organicScan]

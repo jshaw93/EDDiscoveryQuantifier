@@ -1,7 +1,7 @@
 package discquant
 
 import "core:fmt"
-import "core:os/os2"
+import "core:os"
 import "core:flags"
 import "core:thread"
 import "core:mem"
@@ -45,12 +45,12 @@ main :: proc() {
     opt : Options
     defer delete(opt.overflow)
 
-    flags.parse(&opt, os2.args[1:], strict=false, allocator=arenaAlloc)
+    flags.parse(&opt, os.args[1:], strict=false, allocator=arenaAlloc)
     
     // Check if config.json exists, if it doesn't then make config.json, otherwise read config.json
     config : map[string]string
     defer delete(config)
-    configExists : bool = os2.exists("config.json")
+    configExists : bool = os.exists("config.json")
     if !configExists {
         buildErr : ConfigBuildError
         config, buildErr = buildConfig(arenaAlloc)
@@ -64,7 +64,7 @@ main :: proc() {
             return
         }
     } else {
-        configRaw, success := os2.read_entire_file_from_path("./config.json", arenaAlloc)
+        configRaw, success := os.read_entire_file_from_path("./config.json", arenaAlloc)
         umErr := json.unmarshal(configRaw, &config, allocator=arenaAlloc)
         if umErr != nil {
             fmt.println("Unmarshall Error at line 68:", umErr)
@@ -74,14 +74,14 @@ main :: proc() {
 
     // Open journal directory and find latest N journals, defined by -d at runtime
     logPath : string = config["JournalDirectory"]
-    logsDir, err := os2.open(logPath)
+    logsDir, err := os.open(logPath)
     if err != nil {
         fmt.println("Open error line 77:", err)
         return
     }
-    defer os2.close(logsDir)
-    fileInfos, fErr := os2.read_dir(logsDir, -1, arenaAlloc)
-    latestFiles : [dynamic]os2.File_Info
+    defer os.close(logsDir)
+    fileInfos, fErr := os.read_dir(logsDir, -1, arenaAlloc)
+    latestFiles : [dynamic]os.File_Info
     defer delete(latestFiles)
     for fileInfo in fileInfos {
         if !strings.contains(fileInfo.name, ".log") do continue
@@ -130,7 +130,7 @@ main :: proc() {
 }
 
 ParseTaskData :: struct {
-    fileInfo : os2.File_Info,
+    fileInfo : os.File_Info,
     allocator : mem.Allocator,
     explorationData : ExplorationData
 }
@@ -149,15 +149,16 @@ ExplorationData :: struct {
     firstDiscovery : i32,
     firstMapped : i32,
     earthlikes : map[string]u8,
-    waterWorlds : map[string]u8
+    waterWorlds : map[string]u8,
+    heaviestBody : string,
+    heaviestGravity : f32
 }
 
 parseFilesTask :: proc(task : thread.Task) {
     data := transmute(^ParseTaskData)task.data
-    using data
-    fileData, readErr := os2.read_entire_file_from_path(fileInfo.fullpath, context.temp_allocator)
+    fileData, readErr := os.read_entire_file_from_path(data.fileInfo.fullpath, context.temp_allocator)
     if readErr != nil {
-        fmt.println("Read failed at line 158: %s", readErr)
+        fmt.println("Read failed at line 159: %s", readErr)
         return
     }
     fileLines := strings.split(string(fileData), "\r\n", context.temp_allocator)
@@ -165,52 +166,56 @@ parseFilesTask :: proc(task : thread.Task) {
         planetClass : string,
         wasMapped : bool
     }
-    bodies := make(map[string]Body, allocator)
+    bodies := make(map[string]Body, data.allocator)
     defer delete(bodies)
     for line in fileLines {
         // scan, both FSS & DSS
         if strings.contains(line, "\"Scan\"") {
-            scan, err := edlib.deserializeScanEvent(line, allocator)
-            if err != nil do fmt.printfln("Unmarshall Error on line 173: %s | %s", err, fileInfo.name)
+            scan, err := edlib.deserializeScanEvent(line, data.allocator)
+            if err != nil do fmt.printfln("Unmarshall Error on line 174: %s | %s", err, data.fileInfo.name)
             if scan.PlanetClass == "" do continue
             if bodies[scan.BodyName].planetClass == "" {
-                explorationData.bodyFSSCounts[scan.PlanetClass] += 1
+                data.explorationData.bodyFSSCounts[scan.PlanetClass] += 1
                 bodies[scan.BodyName] = {scan.PlanetClass, scan.WasMapped}
             }
-            if scan.MeanAnomaly > explorationData.highestAnomalyBodyValue && scan.Landable {
-                explorationData.highestAnomalyBodyValue = scan.MeanAnomaly
-                explorationData.highestAnomalyBodyName = scan.BodyName
+            if scan.MeanAnomaly > data.explorationData.highestAnomalyBodyValue && scan.Landable {
+                data.explorationData.highestAnomalyBodyValue = scan.MeanAnomaly
+                data.explorationData.highestAnomalyBodyName = scan.BodyName
             }
-            if scan.Radius > explorationData.largestBodyRadius {
-                explorationData.largestBodyRadius = scan.Radius
-                explorationData.largestBody = scan.BodyName
+            if scan.Radius > data.explorationData.largestBodyRadius {
+                data.explorationData.largestBodyRadius = scan.Radius
+                data.explorationData.largestBody = scan.BodyName
             }
-            if scan.Radius < explorationData.smallestBodyRadius || explorationData.smallestBodyRadius == 0 {
-                explorationData.smallestBodyRadius = scan.Radius
-                explorationData.smallestBody = scan.BodyName
+            if scan.Radius < data.explorationData.smallestBodyRadius || data.explorationData.smallestBodyRadius == 0 {
+                data.explorationData.smallestBodyRadius = scan.Radius
+                data.explorationData.smallestBody = scan.BodyName
             }
-            if !scan.WasDiscovered do explorationData.firstDiscovery += 1
-            if scan.PlanetClass == "Earthlike body" do explorationData.earthlikes[scan.BodyName] = 1
-            if scan.PlanetClass == "Water world" do explorationData.waterWorlds[scan.BodyName] = 1
+            if scan.SurfaceGravity > data.explorationData.heaviestGravity && scan.Landable {
+                data.explorationData.heaviestGravity = scan.SurfaceGravity
+                data.explorationData.heaviestBody = scan.BodyName
+            }
+            if !scan.WasDiscovered do data.explorationData.firstDiscovery += 1
+            if scan.PlanetClass == "Earthlike body" do data.explorationData.earthlikes[scan.BodyName] = 1
+            if scan.PlanetClass == "Water world" do data.explorationData.waterWorlds[scan.BodyName] = 1
         }
         // DSS Scan complete
         if strings.contains(line, "\"event\":\"SAAScanComplete\"") {
-            saasEvent, err := edlib.deserializeSAAScanCompleteEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 198:", err)
+            saasEvent, err := edlib.deserializeSAAScanCompleteEvent(line, data.allocator)
+            if err != nil do fmt.println("Unmarshall Error on line 203:", err)
             if strings.contains(saasEvent.BodyName, "Ring") do continue
             body := bodies[saasEvent.BodyName]
-            explorationData.bodyDSSCounts[body.planetClass] += 1
+            data.explorationData.bodyDSSCounts[body.planetClass] += 1
             if !body.wasMapped {
-                explorationData.firstMapped += 1
-                explorationData.bodyFirstMappedCounts[body.planetClass] += 1
+                data.explorationData.firstMapped += 1
+                data.explorationData.bodyFirstMappedCounts[body.planetClass] += 1
             }
         }
         // Organic scans, tabulate based on Genus name, e.g. "Stratum"
         if strings.contains(line, "\"ScanOrganic\"") {
-            soEvent, err := edlib.deserializeScanOrganicEvent(line, allocator)
-            if err != nil do fmt.println("Unmarshall Error on line 210:", err)
+            soEvent, err := edlib.deserializeScanOrganicEvent(line, data.allocator)
+            if err != nil do fmt.println("Unmarshall Error on line 215:", err)
             if soEvent.ScanType != "Analyse" do continue
-            explorationData.bioScanCounts[soEvent.Genus_Localised] += 1
+            data.explorationData.bioScanCounts[soEvent.Genus_Localised] += 1
         }
     }
     free_all(context.temp_allocator)
@@ -232,6 +237,8 @@ printDiscoveryValues :: proc(explorationData : ExplorationData, allocator := con
     smallestSize := stringTools.floatToStringDelimited(explorationData.smallestBodyRadius, ',', 1, context.temp_allocator)
     fmt.printfln("    Largest planet discovered: %s at %skm radius", explorationData.largestBody, largestSize[:len(largestSize)-2])
     fmt.printfln("    Smallest planet discovered: %s at %skm radius", explorationData.smallestBody, smallestSize[:len(smallestSize)-2])
+    heaviestGravity := stringTools.floatToStringDelimited(explorationData.heaviestGravity, ',', 2, context.temp_allocator)
+    fmt.printfln("    Heaviest landable body discovered: %s at %sG", explorationData.heaviestBody, heaviestGravity)
     fmt.printfln("    Weirdest planet discovered: %s", explorationData.highestAnomalyBodyName)
     fmt.println("  ======================================")
     discoveries := stringTools.integerToStringDelimited(explorationData.firstDiscovery, ',', context.temp_allocator)
@@ -274,6 +281,10 @@ tabulateData :: proc(targetPTR : ^ExplorationData, data : ExplorationData) {
     if data.highestAnomalyBodyValue > targetPTR.highestAnomalyBodyValue {
         targetPTR.highestAnomalyBodyValue = data.highestAnomalyBodyValue
         targetPTR.highestAnomalyBodyName = data.highestAnomalyBodyName
+    }
+    if data.heaviestGravity > targetPTR.heaviestGravity {
+        targetPTR.heaviestBody = data.heaviestBody
+        targetPTR.heaviestGravity = data.heaviestGravity
     }
     targetPTR.firstDiscovery += data.firstDiscovery
     targetPTR.firstMapped += data.firstMapped

@@ -233,8 +233,8 @@ printDiscoveryValues :: proc(explorationData : ExplorationData, allocator := con
         fmt.printfln("    %s FSS scans: %s | DSS scans: %s | First maps: %s", bodyType, fssScans, dssScans, firstMaps)
     }
     fmt.println("  ======================================")
-    largestSize := stringTools.floatToStringDelimited(explorationData.largestBodyRadius, ',', 1, context.temp_allocator)
-    smallestSize := stringTools.floatToStringDelimited(explorationData.smallestBodyRadius, ',', 1, context.temp_allocator)
+    largestSize := stringTools.floatToStringDelimited(explorationData.largestBodyRadius / 1000, ',', 1, context.temp_allocator)
+    smallestSize := stringTools.floatToStringDelimited(explorationData.smallestBodyRadius / 1000, ',', 1, context.temp_allocator)
     fmt.printfln("    Largest planet discovered: %s at %skm radius", explorationData.largestBody, largestSize[:len(largestSize)-2])
     fmt.printfln("    Smallest planet discovered: %s at %skm radius", explorationData.smallestBody, smallestSize[:len(smallestSize)-2])
     heaviestGravity := stringTools.floatToStringDelimited(explorationData.heaviestGravity, ',', 2, context.temp_allocator)
